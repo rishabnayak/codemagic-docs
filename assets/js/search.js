@@ -25,45 +25,52 @@ const fuseOptions = {
     ],
 }
 
-$(document).ready(() => {
-    $.getJSON('/index.json', (data) => {
+fetch('/index.json')
+    .then((data) => data.json())
+    .then((data) => {
         fuse = new Fuse(data, fuseOptions)
         initSearchEvents()
     })
-})
 
 const initSearchEvents = () => {
-    $('.search__icon--search').on('click', () => {
-        $(this).closest('.search').find('.search__input').trigger('focus')
-    })
-    $('.search__icon--clear').on('mousedown', () => {
-        // mousedown is before blur, 'click' wouldn't work because after blur the icon disappears
-        updateFromInput(null)
-    })
+    const searchElements = document.querySelectorAll('.search')
+    const searchInputs = document.querySelectorAll('.search__input')
+    const searchIcons = document.querySelectorAll('.search__icon--search')
+    const searchClearIcons = document.querySelectorAll('.search__icon--clear')
 
-    $('.search__input')
-        .bind('focus focusin', () => {
-            $('.search').addClass('search--active')
-        })
-        .bind('blur focusout', (event) => {
-            if (event.target.value) {
-                return
+    searchIcons.forEach((searchIcon) =>
+        searchIcon.addEventListener('click', (e) =>
+            e.target.closest('.search').querySelector('.search__input').focus(),
+        ),
+    )
+    searchClearIcons.forEach((searchClearIcon) =>
+        searchClearIcon.addEventListener('mousedown', () => {
+            // mousedown is before blur, 'click' wouldn't work because after blur the icon disappears
+            updateFromInput(null)
+        }),
+    )
+
+    searchInputs.forEach((searchInput) => {
+        searchInput.addEventListener('focusin', () =>
+            searchElements.forEach((searchElement) => searchElement.classList.add('search--active')),
+        )
+        searchInput.addEventListener('focusout', (event) => {
+            if (!event.target.value) {
+                searchElements.forEach((searchElement) => searchElement.classList.remove('search--active'))
             }
-            $('.search').removeClass('search--active')
         })
-        .on('keyup', (event) => {
+        searchInput.addEventListener('keyup', (event) => {
             if (event.keyCode === 27) {
                 // ESC
                 updateFromInput(null)
                 event.stopImmediatePropagation()
             }
         })
-        .on(
+        searchInput.addEventListener(
             'keyup',
-            debounce((event) => {
-                updateFromInput(event.target.value)
-            }, 250),
+            debounce((event) => updateFromInput(event.target.value), 250),
         )
+    })
 
     updateFromUrl()
 
@@ -99,31 +106,33 @@ const updateResults = (query) => {
     } catch (error) {
         result = error
     }
-    $('#search-results').html(getResultHtml(result, query))
+    const searchResultsElement = document.getElementById('search-results')
+    searchResultsElement.innerHTML = ''
+    if (result) searchResultsElement.append(getResultDomNodes(result, query))
 }
 
 const updateInputs = (query) => {
-    var $inputs = $('.search__input')
-    $inputs.val(query)
-    query === null ? $inputs.trigger('blur') : query && $('.search').addClass('search--active')
+    const searchInputs = document.querySelectorAll('.search__input')
+    searchInputs.forEach((searchInput) => {
+        searchInput.value = query
+        query === null ? searchInput.blur() : query && document.querySelector('.search').classList.add('search--active')
+    })
 }
 
-const getResultHtml = (resultList, query) => {
-    if (!resultList) return null
+function createElementFromHTML(htmlString) {
+    var div = document.createElement('div')
+    div.innerHTML = htmlString.trim()
+    return div.firstChild
+}
 
-    if (resultList instanceof Error) {
-        return $('<div>', {
-            class: 'no-results-message',
-            text: 'Invalid search query: ' + resultList.message,
-        })
-    }
+const getResultDomNodes = (resultList, query) => {
+    if (resultList instanceof Error)
+        return createElementFromHTML(
+            `<div class="no-results-message">Invalid search query: ${resultList.message}</div>`,
+        )
 
-    if (!resultList.length) {
-        return $('<div>', {
-            class: 'no-results-message',
-            text: 'No results matching "' + query + '"',
-        })
-    }
+    if (!resultList.length)
+        return createElementFromHTML(`<div class="no-results-message">No results matching "${query}"</div>`)
 
     const orderByStartPosition = (a, b) => a.start - b.start
 
@@ -200,28 +209,39 @@ const getResultHtml = (resultList, query) => {
               ]
     }
 
-    return $('<ul>', {
-        html: resultList.map((result) => {
-            const snippets = getContentSnippets(result.positions.content, result.item.content)
+    const generateResultHtml = (result) => {
+        const li = document.createElement('li')
+        li.append(getResultItemLink(result))
+        li.append(createElementFromHTML(`<p>${result.item.subtitle}</p>`))
+        const snippets = getContentSnippets(result.positions.content, result.item.content)
+        if (snippets) {
+            const p = document.createElement('p')
+            snippets.forEach((snippet) => p.append(snippetToHtml(snippet)))
+            li.append(p)
+        }
+        return li
+    }
 
-            return $('<li>', {
-                html: [
-                    $('<a>', { text: result.item.title, href: result.item.uri }).markRanges(result.positions.title),
-                    $('<p>', { text: result.item.subtitle }),
-                    snippets
-                        ? $('<p>', {
-                              html: snippets.map((s) => {
-                                  return $('<span>', {
-                                      class: [s.isStart ? 'start' : '', s.isEnd ? 'end' : ''].join(' '),
-                                      text: s.content,
-                                  }).markRanges(s.keywords)
-                              }),
-                          })
-                        : null,
-                ],
-            })
-        }),
-    })
+    const snippetToHtml = (s) => {
+        const span = document.createElement('span')
+        span.append(s.content)
+        span.className = [s.isStart ? 'start' : '', s.isEnd ? 'end' : ''].join(' ')
+        const instance = new Mark(span)
+        instance.markRanges(s.keywords)
+        return span
+    }
+    const getResultItemLink = (result) => {
+        const linkElement = document.createElement('a')
+        linkElement.append(result.item.title)
+        linkElement.href = result.item.uri
+        const instance = new Mark(linkElement)
+        instance.markRanges(result.positions.title)
+        return linkElement
+    }
+
+    const resultNode = document.createElement('ul')
+    resultList.forEach((result) => resultNode.append(generateResultHtml(result)))
+    return resultNode
 }
 
 const getResults = (query) =>
